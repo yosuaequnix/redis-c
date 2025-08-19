@@ -8,7 +8,6 @@
 #include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/ip.h>
-#include <string>
 #include <vector>
 
 static void msg(const char *msg)
@@ -64,7 +63,6 @@ buf_append(std::vector<uint8_t> &buf, const uint8_t *data, size_t len)
 
 const size_t k_max_msg = 32 << 20; // likely larger than the kernel buffer
 
-// the `query` function was simply splited into `send_req` and `read_res`.
 static int32_t send_req(int fd, const uint8_t *text, size_t len)
 {
     if (len > k_max_msg)
@@ -73,7 +71,8 @@ static int32_t send_req(int fd, const uint8_t *text, size_t len)
     }
 
     std::vector<uint8_t> wbuf;
-    buf_append(wbuf, (const uint8_t *)&len, 4);
+    uint32_t msg_len = (uint32_t)len;
+    buf_append(wbuf, (const uint8_t *)&msg_len, 4);
     buf_append(wbuf, text, len);
     return write_all(fd, wbuf.data(), wbuf.size());
 }
@@ -115,9 +114,16 @@ static int32_t read_res(int fd)
         return err;
     }
 
-    // do something
-    printf("len:%u data:%.*s\n", len, len < 100 ? len : 100, &rbuf[4]);
+    // print the response
+    printf("server response: len:%u data:%.*s\n", len, (int)len, &rbuf[4]);
     return 0;
+}
+
+// Helper function to send a command string
+static int32_t send_command(int fd, const char *cmd)
+{
+    size_t len = strlen(cmd);
+    return send_req(fd, (const uint8_t *)cmd, len);
 }
 
 int main()
@@ -138,33 +144,97 @@ int main()
         die("connect");
     }
 
-    // multiple pipelined requests
-    std::vector<std::string> query_list = {
-        "hello1",
-        "hello2",
-        "hello3",
-        // a large message requires multiple event loop iterations
-        std::string(k_max_msg, 'z'),
-        "hello5",
+    printf("Connected to key-value server at 127.0.0.1:1234\n");
+    printf("Sending test commands...\n\n");
+
+    // Define test commands as C strings
+    const char *commands[] = {
+        "SET mykey hello_world",
+        "GET mykey",
+        "SET number 12345",
+        "GET number",
+        "SET test_key some_test_value",
+        "GET test_key",
+        "DEL mykey",
+        "GET mykey",       // should return NIL
+        "DEL nonexistent", // should return NIL
+        "GET nonexistent"  // should return NIL
     };
-    for (const std::string &s : query_list)
+
+    size_t num_commands = sizeof(commands) / sizeof(commands[0]);
+
+    // Declare variables that could be used after goto
+    const char *invalid_commands[] = {
+        "INVALID_CMD key",
+        "SET", // missing key and value
+        "GET", // missing key
+        ""     // empty command
+    };
+    size_t num_invalid = sizeof(invalid_commands) / sizeof(invalid_commands[0]);
+
+    // Send all commands (pipelined)
+    printf("Sending %zu commands:\n", num_commands);
+    for (size_t i = 0; i < num_commands; ++i)
     {
-        int32_t err = send_req(fd, (uint8_t *)s.data(), s.size());
+        printf("  [%zu] %s\n", i + 1, commands[i]);
+        int32_t err = send_command(fd, commands[i]);
         if (err)
         {
-            goto L_DONE;
-        }
-    }
-    for (size_t i = 0; i < query_list.size(); ++i)
-    {
-        int32_t err = read_res(fd);
-        if (err)
-        {
+            printf("Failed to send command: %s\n", commands[i]);
             goto L_DONE;
         }
     }
 
+    printf("\nReceiving responses:\n");
+    // Read all responses
+    for (size_t i = 0; i < num_commands; ++i)
+    {
+        printf("  [%zu] ", i + 1);
+        int32_t err = read_res(fd);
+        if (err)
+        {
+            printf("Failed to read response for command %zu\n", i + 1);
+            goto L_DONE;
+        }
+    }
+
+    printf("\nTesting large value...\n");
+    // Test with a large value
+    char large_cmd[1024];
+    char large_value[500];
+    memset(large_value, 'A', sizeof(large_value) - 1);
+    large_value[sizeof(large_value) - 1] = '\0';
+
+    snprintf(large_cmd, sizeof(large_cmd), "SET large_key %s", large_value);
+
+    if (send_command(fd, large_cmd) == 0)
+    {
+        printf("Sent large SET command\n");
+        printf("Response: ");
+        read_res(fd);
+
+        if (send_command(fd, "GET large_key") == 0)
+        {
+            printf("Sent GET large_key\n");
+            printf("Response: ");
+            read_res(fd);
+        }
+    }
+
+    printf("\nTesting invalid commands...\n");
+
+    for (size_t i = 0; i < num_invalid; ++i)
+    {
+        printf("Sending invalid command: '%s'\n", invalid_commands[i]);
+        if (send_command(fd, invalid_commands[i]) == 0)
+        {
+            printf("Response: ");
+            read_res(fd);
+        }
+    }
+
 L_DONE:
+    printf("\nClosing connection...\n");
     close(fd);
     return 0;
 }
