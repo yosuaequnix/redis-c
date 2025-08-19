@@ -594,5 +594,11 @@ int main()
             }
         } // for each connection sockets
     } // the event loop
+
+    // cleanup
+    if (redis_ctx) {
+        redisFree(redis_ctx);
+    }
+    
     return 0;
 }
