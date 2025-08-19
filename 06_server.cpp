@@ -466,6 +466,12 @@ static void handle_read(Conn *conn)
 
 int main()
 {
+    // Initialize Redis connection
+    if (!init_redis())
+    {
+        die("Failed to connect to Redis");
+    }
+
     // the listening socket
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0)
@@ -495,6 +501,10 @@ int main()
     {
         die("listen()");
     }
+
+    printf("Key-Value server listening on port 1234\n");
+    printf("Protocol: <4-byte-length><command> <key> [value]\n");
+    printf("Commands: GET <key>, SET <key> <value>, DEL <key>\n");
 
     // a map of all client connections, keyed by fd
     std::vector<Conn *> fd2conn;
