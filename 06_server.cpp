@@ -14,6 +14,8 @@
 #include <netinet/ip.h>
 // C++
 #include <vector>
+// hiredis
+#include <hiredis/hiredis.h>
 
 static void msg(const char *msg)
 {
@@ -52,6 +54,47 @@ static void fd_set_nb(int fd)
 }
 
 const size_t k_max_msg = 32 << 20; // likely larger than the kernel buffer
+// Redis connection (global for simplicity)
+static redisContext *redis_ctx = NULL;
+
+// initialize Redis connection
+static bool init_redis()
+{
+    redis_ctx = redisConnect("127.0.0.1", 6379);
+    if (redis_ctx == NULL || redis_ctx->err)
+    {
+        if (redis_ctx)
+        {
+            fprintf(stderr, "Redis connection error: %s\n", redis_ctx->errstr);
+            redisFree(redis_ctx);
+        }
+        else
+        {
+            fprintf(stderr, "Redis connection error: can't allocate redis context\n");
+        }
+        return false;
+    }
+
+    // Test the connection
+    redisReply *reply = (redisReply *)redisCommand(redis_ctx, "PING");
+    if (reply == NULL)
+    {
+        fprintf(stderr, "Redis PING failed\n");
+        return false;
+    }
+
+    if (reply->type == REDIS_REPLY_STATUS && strcmp(reply->str, "PONG") == 0)
+    {
+        printf("Redis connection established\n");
+    }
+    else
+    {
+        printf("Unexpected Redis PING response\n");
+    }
+
+    freeReplyObject(reply);
+    return true;
+}
 
 struct Conn
 {
