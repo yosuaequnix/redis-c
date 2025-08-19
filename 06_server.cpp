@@ -134,6 +134,54 @@ static void copy_substring(char* dest, size_t dest_size, const char* src, size_t
     dest[copy_len] = '\0';
 }
 
+// Parse a request string into command, key, and optional value
+static bool parse_request(const uint8_t *data, uint32_t len, ParsedRequest *req) {
+    const char* start = (const char*)data;
+    const char* end = start + len;
+    const char* pos = start;
+    
+    // Clear the request structure
+    memset(req, 0, sizeof(*req));
+    
+    // Parse command
+    const char* cmd_end = find_space_or_end(pos, end);
+    if (cmd_end == pos) {
+        return false; // No command
+    }
+    
+    size_t cmd_len = cmd_end - pos;
+    if (cmd_len == 3 && memcmp(pos, "GET", 3) == 0) {
+        req->cmd = CMD_GET;
+    } else if (cmd_len == 3 && memcmp(pos, "SET", 3) == 0) {
+        req->cmd = CMD_SET;
+    } else if (cmd_len == 3 && memcmp(pos, "DEL", 3) == 0) {
+        req->cmd = CMD_DEL;
+    } else {
+        req->cmd = CMD_UNKNOWN;
+        return false;
+    }
+    
+    // Skip to key
+    pos = skip_spaces(cmd_end, end);
+    if (pos >= end) {
+        return false; // No key
+    }
+    
+    // Parse key
+    const char* key_end = find_space_or_end(pos, end);
+    copy_substring(req->key, sizeof(req->key), pos, key_end - pos);
+    
+    // Parse value if present (for SET command)
+    if (key_end < end) {
+        pos = skip_spaces(key_end, end);
+        if (pos < end) {
+            copy_substring(req->value, sizeof(req->value), pos, end - pos);
+        }
+    }
+    
+    return true;
+}
+
 struct Conn
 {
     int fd = -1;
