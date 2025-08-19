@@ -357,13 +357,28 @@ static bool try_one_request(Conn *conn)
     }
     const uint8_t *request = &conn->incoming[4];
 
-    // got one request, do some application logic
-    printf("client says: len:%d data:%.*s\n",
+    // got one request, parse and execute it
+    printf("client request: len:%d data:%.*s\n",
            len, len < 100 ? len : 100, request);
 
-    // generate the response (echo)
-    buf_append(conn->outgoing, (const uint8_t *)&len, 4);
-    buf_append(conn->outgoing, request, len);
+    ParsedRequest parsed_req;
+    const char *response;
+
+    if (parse_request(request, len, &parsed_req))
+    {
+        // Execute the Redis command
+        response = execute_redis_command(&parsed_req);
+        printf("response: %s\n", response);
+    }
+    else
+    {
+        response = "ERROR: Invalid request format. Use: GET <key>, SET <key> <value>, or DEL <key>";
+    }
+
+    // generate the response
+    uint32_t response_len = strlen(response);
+    buf_append(conn->outgoing, (const uint8_t *)&response_len, 4);
+    buf_append(conn->outgoing, (const uint8_t *)response, response_len);
 
     // application logic done! remove the request message.
     buf_consume(conn->incoming, 4 + len);
