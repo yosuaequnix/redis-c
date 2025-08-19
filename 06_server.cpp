@@ -98,88 +98,188 @@ static bool init_redis()
 
 // Protocol: <command> <key> [value]
 // Commands: GET, SET, DEL
-enum Command {
+enum Command
+{
     CMD_GET,
     CMD_SET,
     CMD_DEL,
     CMD_UNKNOWN
 };
 
-struct ParsedRequest {
+struct ParsedRequest
+{
     Command cmd;
     char key[256];
     char value[1024];
 };
 
 // Find next space or end of string
-static const char* find_space_or_end(const char* start, const char* end) {
-    while (start < end && *start != ' ') {
+static const char *find_space_or_end(const char *start, const char *end)
+{
+    while (start < end && *start != ' ')
+    {
         start++;
     }
     return start;
 }
 
 // Skip spaces
-static const char* skip_spaces(const char* start, const char* end) {
-    while (start < end && *start == ' ') {
+static const char *skip_spaces(const char *start, const char *end)
+{
+    while (start < end && *start == ' ')
+    {
         start++;
     }
     return start;
 }
 
 // Copy substring to buffer with null termination
-static void copy_substring(char* dest, size_t dest_size, const char* src, size_t len) {
+static void copy_substring(char *dest, size_t dest_size, const char *src, size_t len)
+{
     size_t copy_len = len < dest_size - 1 ? len : dest_size - 1;
     memcpy(dest, src, copy_len);
     dest[copy_len] = '\0';
 }
 
 // Parse a request string into command, key, and optional value
-static bool parse_request(const uint8_t *data, uint32_t len, ParsedRequest *req) {
-    const char* start = (const char*)data;
-    const char* end = start + len;
-    const char* pos = start;
-    
+static bool parse_request(const uint8_t *data, uint32_t len, ParsedRequest *req)
+{
+    const char *start = (const char *)data;
+    const char *end = start + len;
+    const char *pos = start;
+
     // Clear the request structure
     memset(req, 0, sizeof(*req));
-    
+
     // Parse command
-    const char* cmd_end = find_space_or_end(pos, end);
-    if (cmd_end == pos) {
+    const char *cmd_end = find_space_or_end(pos, end);
+    if (cmd_end == pos)
+    {
         return false; // No command
     }
-    
+
     size_t cmd_len = cmd_end - pos;
-    if (cmd_len == 3 && memcmp(pos, "GET", 3) == 0) {
+    if (cmd_len == 3 && memcmp(pos, "GET", 3) == 0)
+    {
         req->cmd = CMD_GET;
-    } else if (cmd_len == 3 && memcmp(pos, "SET", 3) == 0) {
+    }
+    else if (cmd_len == 3 && memcmp(pos, "SET", 3) == 0)
+    {
         req->cmd = CMD_SET;
-    } else if (cmd_len == 3 && memcmp(pos, "DEL", 3) == 0) {
+    }
+    else if (cmd_len == 3 && memcmp(pos, "DEL", 3) == 0)
+    {
         req->cmd = CMD_DEL;
-    } else {
+    }
+    else
+    {
         req->cmd = CMD_UNKNOWN;
         return false;
     }
-    
+
     // Skip to key
     pos = skip_spaces(cmd_end, end);
-    if (pos >= end) {
+    if (pos >= end)
+    {
         return false; // No key
     }
-    
+
     // Parse key
-    const char* key_end = find_space_or_end(pos, end);
+    const char *key_end = find_space_or_end(pos, end);
     copy_substring(req->key, sizeof(req->key), pos, key_end - pos);
-    
+
     // Parse value if present (for SET command)
-    if (key_end < end) {
+    if (key_end < end)
+    {
         pos = skip_spaces(key_end, end);
-        if (pos < end) {
+        if (pos < end)
+        {
             copy_substring(req->value, sizeof(req->value), pos, end - pos);
         }
     }
-    
+
     return true;
+}
+
+// Execute Redis command and format response
+static const char *execute_redis_command(const ParsedRequest *req)
+{
+    static char response_buffer[2048];
+
+    if (!redis_ctx)
+    {
+        strcpy(response_buffer, "ERROR: Redis not connected");
+        return response_buffer;
+    }
+
+    redisReply *reply = NULL;
+
+    switch (req->cmd)
+    {
+    case CMD_GET:
+        reply = (redisReply *)redisCommand(redis_ctx, "GET %s", req->key);
+        if (reply == NULL)
+        {
+            strcpy(response_buffer, "ERROR: Redis command failed");
+        }
+        else if (reply->type == REDIS_REPLY_STRING)
+        {
+            snprintf(response_buffer, sizeof(response_buffer), "OK %s", reply->str);
+        }
+        else if (reply->type == REDIS_REPLY_NIL)
+        {
+            strcpy(response_buffer, "NIL");
+        }
+        else
+        {
+            strcpy(response_buffer, "ERROR: Unexpected reply type");
+        }
+        break;
+
+    case CMD_SET:
+        reply = (redisReply *)redisCommand(redis_ctx, "SET %s %s", req->key, req->value);
+        if (reply == NULL)
+        {
+            strcpy(response_buffer, "ERROR: Redis command failed");
+        }
+        else if (reply->type == REDIS_REPLY_STATUS &&
+                 strcmp(reply->str, "OK") == 0)
+        {
+            strcpy(response_buffer, "OK");
+        }
+        else
+        {
+            strcpy(response_buffer, "ERROR: SET failed");
+        }
+        break;
+
+    case CMD_DEL:
+        reply = (redisReply *)redisCommand(redis_ctx, "DEL %s", req->key);
+        if (reply == NULL)
+        {
+            strcpy(response_buffer, "ERROR: Redis command failed");
+        }
+        else if (reply->type == REDIS_REPLY_INTEGER)
+        {
+            strcpy(response_buffer, reply->integer > 0 ? "OK" : "NIL");
+        }
+        else
+        {
+            strcpy(response_buffer, "ERROR: Unexpected reply type");
+        }
+        break;
+
+    default:
+        strcpy(response_buffer, "ERROR: Unknown command");
+        break;
+    }
+
+    if (reply)
+    {
+        freeReplyObject(reply);
+    }
+
+    return response_buffer;
 }
 
 struct Conn
