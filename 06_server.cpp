@@ -596,9 +596,10 @@ int main()
     } // the event loop
 
     // cleanup
-    if (redis_ctx) {
+    if (redis_ctx)
+    {
         redisFree(redis_ctx);
     }
-    
+
     return 0;
 }
