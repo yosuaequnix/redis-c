@@ -96,6 +96,44 @@ static bool init_redis()
     return true;
 }
 
+// Protocol: <command> <key> [value]
+// Commands: GET, SET, DEL
+enum Command {
+    CMD_GET,
+    CMD_SET,
+    CMD_DEL,
+    CMD_UNKNOWN
+};
+
+struct ParsedRequest {
+    Command cmd;
+    char key[256];
+    char value[1024];
+};
+
+// Find next space or end of string
+static const char* find_space_or_end(const char* start, const char* end) {
+    while (start < end && *start != ' ') {
+        start++;
+    }
+    return start;
+}
+
+// Skip spaces
+static const char* skip_spaces(const char* start, const char* end) {
+    while (start < end && *start == ' ') {
+        start++;
+    }
+    return start;
+}
+
+// Copy substring to buffer with null termination
+static void copy_substring(char* dest, size_t dest_size, const char* src, size_t len) {
+    size_t copy_len = len < dest_size - 1 ? len : dest_size - 1;
+    memcpy(dest, src, copy_len);
+    dest[copy_len] = '\0';
+}
+
 struct Conn
 {
     int fd = -1;
